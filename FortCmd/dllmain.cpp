@@ -79,8 +79,6 @@ struct TArray
     
     FORCEINLINE T& operator[](int32 Index)
     {
-        if (Index >= Num())
-            PRINT("Attempting to index into array larger that size");
         return GetData()[Index];
     }
 
