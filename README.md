@@ -5,9 +5,8 @@ Inspiration: [UniversalFNConsole](https://github.com/notsamicc/UniversalFNConsol
 
 # Todo
 Autocomplete for:
- - Commands (Functions with exec flag)
+ - Descriptions for Functions with exec flag
  - Maps (open {map name})
- - Stat commands
  - Console Variables
 
 # Things used

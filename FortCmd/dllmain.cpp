@@ -17,6 +17,9 @@
 
 #define KeyPressed(Key) (GetAsyncKeyState(VK_F9) & 1)
 
+#define GET_OFFSETPTR(Type, Base, Offset) ((Type*)((uint64)Base + Offset))
+#define GET_OFFSET(Type, Base, Offset) (*GET_OFFSETPTR(Type, Base, Offset))
+
 typedef signed char int8;
 typedef signed short int16;
 typedef signed int int32;
@@ -26,10 +29,12 @@ typedef unsigned short uint16;
 typedef unsigned int uint32;
 typedef unsigned long long uint64;
 
+typedef int64 FName;
+
 void* /* UObject* */ (__fastcall* StaticConstructObject_Internal)(
     void* Class, // UObject*
     void* InOuter, // UObject*
-    __int64 Name, // FName
+    FName Name,
     int SetFlags,
     int InternalSetFlags,
     void* Template, // UObject*
@@ -52,6 +57,12 @@ void* (__fastcall * FMemoryRealloc)(
     void* Original,
     SIZE_T Count,
     uint32 Alignment
+    );
+
+void(__fastcall * ProcessEvent)(
+    void* Object,
+    void* Function,
+    void* Parms
     );
 
 // 
@@ -94,7 +105,6 @@ struct TArray
     }
 };
 
-
 struct FString
 {
     TArray<wchar_t> Data;
@@ -119,6 +129,28 @@ struct FString
         return Data.GetData()[Index];
     }
 };
+
+struct FUObjectItem
+{
+    void* Object;
+    int32 Flags;
+    int32 ClusterRootIndex;
+    int32 SerialNumber;
+};
+
+struct ObjectArray
+{
+    FORCEINLINE int32 Num()
+    {
+        return GET_OFFSET(int32, this, 8);
+    }
+    FORCEINLINE void* GetObj(int32 Index)
+    {
+        return (*(FUObjectItem**)this)[Index].Object;
+    }
+};
+
+static ObjectArray* GUObjectArray;
 
 bool(__fastcall* FindPackagesInDirectory)(
     TArray<FString>& a1,
@@ -169,6 +201,30 @@ struct FAutoCompleteCommand
     {
     }
 };
+
+FString FNameToString(FName& Name)
+{
+    static void* KismetStringLibrary = StaticFindObject(nullptr, nullptr, L"/Script/Engine.KismetStringLibrary", false);
+    if (!KismetStringLibrary)
+    {
+        BasicMessageBox("Didn't find KismetStringLibrary :(");
+        return FString();
+    }
+    static void* Conv_NameToString = StaticFindObject(nullptr, nullptr, L"/Script/Engine.KismetStringLibrary.Conv_NameToString", false);
+    if (!Conv_NameToString)
+    {
+        BasicMessageBox("Didn't find Conv_NameToString :(");
+        return FString();
+    }
+
+    struct {
+        FName InName;
+        FString ReturnValue;
+    } Parms { Name };
+
+    ProcessEvent(KismetStringLibrary, Conv_NameToString, &Parms);
+    return Parms.ReturnValue;
+}
 
 struct UConsole
 {
@@ -226,10 +282,10 @@ struct UConsole
         int32 AutoCompleteMapPathsOffset = 64;
         int32 AutoCompleteCommandColorOffset = 96;
 
-        FColor AutoCompleteCommandColor = *(FColor*)((uint64)ConsoleSettings + AutoCompleteCommandColorOffset);
+        FColor AutoCompleteCommandColor = GET_OFFSET(FColor, ConsoleSettings, AutoCompleteCommandColorOffset);
 
         {
-            TArray<FAutoCompleteCommand> ManualAutoCompleteList = *(TArray<FAutoCompleteCommand>*)((uint64)ConsoleSettings + ManualAutoCompleteListOffset);
+            TArray<FAutoCompleteCommand> ManualAutoCompleteList = GET_OFFSET(TArray<FAutoCompleteCommand>, ConsoleSettings, ManualAutoCompleteListOffset);
             for (int32 i = 0; i < ManualAutoCompleteList.Num(); i++)
             {
                 FAutoCompleteCommand toadd;
@@ -241,8 +297,38 @@ struct UConsole
             }
         }
 
-        // For exec commands i guess just loop through all objects and get functions that have exec flag
+        {
+            int32 ClassPrivateOffset = 16;
+            int32 NamePrivateOffset = 24;
+            int32 FunctionFlagsOffset = 136;
+            void* FunctionClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.Function", false);
+            PRINT("Total objects: %i", GUObjectArray->Num());
+            for (int32 i = 0; i < GUObjectArray->Num(); i++)
+            {
+                void* obj = GUObjectArray->GetObj(i);
+                if (!obj)
+                {
+                    continue;
+                }
 
+                // TODO: LevelScriptActor?
+
+                if (GET_OFFSET(void*, obj, ClassPrivateOffset) == FunctionClass)
+                {
+                    if (GET_OFFSET(uint32, obj, FunctionFlagsOffset) & 0x00000200)
+                    {
+                        FAutoCompleteCommand test_cmd;
+                        test_cmd.Command = FNameToString(GET_OFFSET(FName, obj, NamePrivateOffset));
+                        test_cmd.Color = AutoCompleteCommandColor;
+
+                        // TODO: Generate description
+
+                        AutoCompleteList.Add(test_cmd);
+                    }
+                }
+            }
+        }
+        
         {
             FAutoCompleteCommand test_cmd;
             test_cmd.Command = FString(L"open 127.0.0.1");
@@ -265,7 +351,7 @@ struct UConsole
 
         for (int32 ListIdx = 0; ListIdx < AutoCompleteList.Num(); ListIdx++)
         {
-            FString Command = AutoCompleteList[ListIdx].Command/*.ToLower()*/;
+            FString Command = AutoCompleteList[ListIdx].Command;
             FAutoCompleteNode* Node = &AutoCompleteTree;
             for (int32 Depth = 0; Depth < Command.Len(); Depth++)
             {
@@ -319,6 +405,14 @@ DWORD WINAPI Main(LPVOID lpParam)
     auto FMemoryReallocAddr = Memcury::Scanner::FindPattern("4C 8B D1 48 8B 0D ? ? ? ? 48 85 C9 75 ? 49 8B CA").Get();
     CheckAddr(FMemoryReallocAddr, "Failed to find FMemoryRealloc");
     FMemoryRealloc = decltype(FMemoryRealloc)(FMemoryReallocAddr);
+    
+    auto ObjectsArrAddr = Memcury::Scanner::FindPattern("48 8B 05 ? ? ? ? 48 8D 1C C8 81 4B ? ? ? ? ? 49 63 76").RelativeOffset(3).Get();
+    CheckAddr(ObjectsArrAddr, "Failed to find ObjectsArray");
+    GUObjectArray = decltype(GUObjectArray)(ObjectsArrAddr);
+    
+    auto ProcessEventAddr = Memcury::Scanner::FindPattern("40 55 56 57 41 54 41 55 41 56 41 57 48 81 EC F0 00 00 00").Get();
+    CheckAddr(ProcessEventAddr, "Failed to find ProcessEvent");
+    ProcessEvent = decltype(ProcessEvent)(ProcessEventAddr);
 
     /*auto FindPackagesAddr = Memcury::Scanner::FindPattern("48 8B C4 53 56 48 83 EC 68 48 89 68").Get();
     CheckAddr(FindPackagesAddr, "Failed to find FindPackagesInDirectory");
@@ -347,8 +441,8 @@ DWORD WINAPI Main(LPVOID lpParam)
                 break;
             }
 
-            auto GameViewport = *(void**)((uint64)Engine + GameViewportClientOffset);
-            auto ViewportConsole = (void**)((uint64)GameViewport + ViewportConsoleOffset);
+            auto GameViewport = GET_OFFSET(void*, Engine, GameViewportClientOffset);
+            auto ViewportConsole = GET_OFFSETPTR(void*, GameViewport, ViewportConsoleOffset);
 
             auto ConstructedConsole = (UConsole*)StaticConstructObject_Internal(ConsoleClass, GameViewport, 0, 0, 0, nullptr, false, nullptr, false);
             if (!ConstructedConsole)
