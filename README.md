@@ -7,7 +7,6 @@ Inspiration: [UniversalFNConsole](https://github.com/notsamicc/UniversalFNConsol
 
  - Autocomplete for:
    - Maps (open {map name})
-   - Console Variables
  - Support for more versions
 
 # Things used

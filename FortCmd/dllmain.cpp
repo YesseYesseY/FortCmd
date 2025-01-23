@@ -43,11 +43,13 @@ namespace Offsets
     int32 ManualAutoCompleteListOffset = 48;
     int32 AutoCompleteMapPathsOffset = 64;
     int32 AutoCompleteCommandColorOffset = 96;
+    int32 AutoCompleteCVarColorOffset = 100;
+    int32 AutoCompleteFadedColorOffset = 104;
     int32 GameViewportClientOffset = 1832;
     int32 ViewportConsoleOffset = 64;
     int32 PropertyDataOffset = 112;
     int32 PropertyFlagsOffset = 56;
-
+    int32 ConsoleObjectsOffset = 8;
 }
 
 void* /* UObject* */ (__fastcall* StaticConstructObject_Internal)(
@@ -89,7 +91,6 @@ void(__fastcall * ProcessEvent)(
     void* Parms
     );
 
-// 
 template <typename T>
 struct TArray
 {
@@ -213,6 +214,133 @@ struct FString
     FORCEINLINE FString& operator+=(FString Str)
     {
         return *this += Str.Data.Data;
+    }
+};
+
+template<int32 Size, uint32 Alignment>
+struct alignas(Alignment) TAlignedBytes
+{
+    uint8 Pad[Size];
+};
+
+template<typename ElementType>
+struct TTypeCompatibleBytes :
+    public TAlignedBytes<
+    sizeof(ElementType),
+    alignof(ElementType)
+    >
+{
+};
+
+template <uint32 NumInlineElements, typename SecondaryAllocator = void>
+struct TInlineAllocator
+{
+    template <typename ElementType>
+    struct ForElementType
+    {
+        TTypeCompatibleBytes<ElementType> InlineData[NumInlineElements];
+        ElementType* SecondaryData;
+    };
+};
+
+struct TBitArray
+{
+    typedef TInlineAllocator<4>::ForElementType<uint32> AllocatorType;
+
+    AllocatorType AllocatorInstance;
+    int32         NumBits;
+    int32         MaxBits;
+};
+
+template<typename ElementType>
+union TSparseArrayElementOrFreeListLink
+{
+    /** If the element is allocated, its value is stored here. */
+    ElementType ElementData;
+
+    struct
+    {
+        /** If the element isn't allocated, this is a link to the previous element in the array's free list. */
+        int32 PrevFreeIndex;
+
+        /** If the element isn't allocated, this is a link to the next element in the array's free list. */
+        int32 NextFreeIndex;
+    };
+};
+
+template <typename T>
+struct TSparseArray
+{
+    typedef TSparseArrayElementOrFreeListLink<
+        TAlignedBytes<sizeof(T), alignof(T)>
+    > FElementOrFreeListLink;
+    TArray<FElementOrFreeListLink> Data;
+    TBitArray AllocationFlags;
+    int32 FirstFreeIndex;
+    int32 NumFreeIndices;
+
+    int32 Num() const
+    {
+        return Data.Num() - NumFreeIndices;
+    }
+
+    FElementOrFreeListLink& GetData(int32 Index)
+    {
+        return ((FElementOrFreeListLink*)Data.GetData())[Index];
+    }
+
+    T& operator[](int32 Index)
+    {
+        return *(T*)&GetData(Index).ElementData;
+    }
+};
+
+template <typename InElementType>
+struct TSetElement
+{
+    InElementType Value;
+    mutable int32 HashNextId; // FSetElementId
+    mutable int32 HashIndex;
+};
+
+template <typename T>
+struct TSet
+{
+    TSparseArray<TSetElement<T>> Elements;
+    mutable TInlineAllocator<1>::ForElementType<int32> Hash;
+    mutable int32 HashSize;
+
+    int32 Num() const
+    {
+        return Elements.Num();
+    }
+
+    FORCEINLINE T& operator[](int32 Index)
+    {
+        return Elements[Index].Value;
+    }
+};
+
+template <typename T1, typename T2>
+struct TPair
+{
+    T1 First;
+    T2 Second;
+};
+
+template <typename KeyType, typename ValueType>
+struct TMap
+{
+    TSet<TPair<KeyType, ValueType>> Pairs;
+
+    FORCEINLINE int32 Num() const
+    {
+        return Pairs.Num();
+    }
+
+    FORCEINLINE TPair<KeyType, ValueType>& operator[](int32 Index)
+    {
+        return Pairs[Index];
     }
 };
 
@@ -522,6 +650,8 @@ FString GenerateFuncDesc(void* Func)
     return ret;
 }
 
+static void* ConsoleManager;
+
 struct UConsole
 {
     uint8 pad[104];
@@ -575,6 +705,8 @@ struct UConsole
     void BuildRuntimeAutoCompleteList()
     {
         FColor AutoCompleteCommandColor = GET_OFFSET(FColor, ConsoleSettings, Offsets::AutoCompleteCommandColorOffset);
+        FColor AutoCompleteCVarColor = GET_OFFSET(FColor, ConsoleSettings, Offsets::AutoCompleteCVarColorOffset);
+        FColor AutoCompleteFadedColor = GET_OFFSET(FColor, ConsoleSettings, Offsets::AutoCompleteFadedColorOffset);
 
         {
             TArray<FAutoCompleteCommand> ManualAutoCompleteList = GET_OFFSET(TArray<FAutoCompleteCommand>, ConsoleSettings, Offsets::ManualAutoCompleteListOffset);
@@ -637,6 +769,17 @@ struct UConsole
             }
         }
 #endif
+        {
+            typedef TMap<FString, void*> COType;
+            auto ConsoleObjects = GET_OFFSET(COType, ConsoleManager, Offsets::ConsoleObjectsOffset);
+            for (int32 i = 0; i < ConsoleObjects.Num(); i++)
+            {
+                FAutoCompleteCommand test_cmd;
+                test_cmd.Command = ConsoleObjects[i].First;
+                test_cmd.Color = AutoCompleteCVarColor;
+                AutoCompleteList.Add(test_cmd);
+            }
+        }
 
         for (int32 ListIdx = 0; ListIdx < AutoCompleteList.Num(); ListIdx++)
         {
@@ -706,6 +849,10 @@ DWORD WINAPI Main(LPVOID lpParam)
     auto ProcessEventAddr = Memcury::Scanner::FindPattern("40 55 56 57 41 54 41 55 41 56 41 57 48 81 EC F0 00 00 00").Get();
     CheckAddr(ProcessEventAddr, "Failed to find ProcessEvent");
     ProcessEvent = decltype(ProcessEvent)(ProcessEventAddr);
+
+    auto ConsoleManagerAddr = Memcury::Scanner::FindPattern("48 89 05 ? ? ? ? 48 8B C8 48 85 C0").RelativeOffset(3).GetAs<void**>();
+    CheckAddr(ConsoleManagerAddr, "Failed to find ConsoleManager");
+    ConsoleManager = *ConsoleManagerAddr;
 
     /*auto FindPackagesAddr = Memcury::Scanner::FindPattern("48 8B C4 53 56 48 83 EC 68 48 89 68").Get();
     CheckAddr(FindPackagesAddr, "Failed to find FindPackagesInDirectory");
