@@ -1,5 +1,7 @@
 #include <Windows.h>
 #include <stdlib.h>
+#include <format>
+#include <string>
 
 #include "memcury.h"
 
@@ -31,6 +33,23 @@ typedef unsigned long long uint64;
 
 typedef int64 FName;
 
+namespace Offsets
+{
+    int32 UFieldNextOffset = 40;
+    int32 ChildrenOffset = 56;
+    int32 ClassPrivateOffset = 16;
+    int32 NamePrivateOffset = 24;
+    int32 FunctionFlagsOffset = 136;
+    int32 ManualAutoCompleteListOffset = 48;
+    int32 AutoCompleteMapPathsOffset = 64;
+    int32 AutoCompleteCommandColorOffset = 96;
+    int32 GameViewportClientOffset = 1832;
+    int32 ViewportConsoleOffset = 64;
+    int32 PropertyDataOffset = 112;
+    int32 PropertyFlagsOffset = 56;
+
+}
+
 void* /* UObject* */ (__fastcall* StaticConstructObject_Internal)(
     void* Class, // UObject*
     void* InOuter, // UObject*
@@ -59,6 +78,11 @@ void* (__fastcall * FMemoryRealloc)(
     uint32 Alignment
     );
 
+void* (__fastcall* FMemoryMalloc)(
+    SIZE_T Count,
+    uint32 Alignment
+    );
+
 void(__fastcall * ProcessEvent)(
     void* Object,
     void* Function,
@@ -69,9 +93,23 @@ void(__fastcall * ProcessEvent)(
 template <typename T>
 struct TArray
 {
-    T* Data = nullptr;
-    int32 ArrayNum = 0;
-    int32 ArrayMax = 0;
+    T* Data;
+    int32 ArrayNum;
+    int32 ArrayMax;
+
+    FORCEINLINE TArray()
+    {
+        Data = nullptr;
+        ArrayNum = 0;
+        ArrayMax = 0;
+    }
+    
+    FORCEINLINE TArray(int32 size)
+    {
+        Data = (T*)FMemoryMalloc(sizeof(T) * size, 0);
+        ArrayNum = 0;
+        ArrayMax = sizeof(T);
+    }
 
     FORCEINLINE int32 Num() const
     {
@@ -93,40 +131,88 @@ struct TArray
         return GetData()[Index];
     }
 
+    FORCEINLINE void IncreaseSize(int32 amount)
+    {
+        Data = (T*)FMemoryRealloc(Data, sizeof(T) * (ArrayMax + amount), 0);
+        ArrayMax += amount;
+    }
+
     FORCEINLINE void Add(T Val)
     {
         if (ArrayMax <= ArrayNum)
         {
-            Data = (T*)FMemoryRealloc(Data, sizeof(T) * (ArrayNum + 1), 0);
+            IncreaseSize(1);
         }
-        Data[ArrayNum] = Val;
-        ArrayMax++;
-        ArrayNum++;
+        Data[ArrayNum++] = Val;
     }
+
+    FORCEINLINE void Free()
+    {
+        if (Data)
+            FMemoryFree(Data);
+        ArrayNum = 0;
+        ArrayMax = 0;
+    }
+
 };
 
 struct FString
 {
     TArray<wchar_t> Data;
 
-    FString() = default;
+    FORCEINLINE FString()
+    {
+
+    }
 
     FORCEINLINE FString(const wchar_t* Str)
     {
         int32 size = wcslen(Str) + 1;
+        Data = TArray<wchar_t>(size);
+        memcpy(Data.Data, Str, sizeof(wchar_t) * size);
         Data.ArrayNum = size;
         Data.ArrayMax = size;
-        Data.Data = (wchar_t*)Str;
     }
 
     FORCEINLINE int32 Len() const
     {
-        return Data.Num() - 1;
+        return Data.Num() ? Data.Num() - 1 : 0;
     }
 
     FORCEINLINE TCHAR& operator[](int32 Index)
     {
         return Data.GetData()[Index];
+    }
+
+    // How this is implemented doesnt really matter, it's not gonna be used in the final version anyways
+    FORCEINLINE std::string ToString()
+    {
+        auto wstr = std::wstring(Data.Data);
+        return std::string(wstr.begin(), wstr.end());
+    }
+
+    FORCEINLINE FString& operator+=(const wchar_t* Str)
+    {
+        int32 oldlen = Len();
+        int32 newsize = wcslen(Str) + 1;
+        Data.IncreaseSize(newsize);
+        memcpy(
+            (void*)((uint64)Data.Data + (oldlen * sizeof(wchar_t))),
+            Str,
+            newsize * sizeof(wchar_t)
+        );
+        Data.ArrayNum = oldlen + newsize;
+        return *this;
+    }
+
+    FORCEINLINE void Free()
+    {
+        Data.Free();
+    }
+
+    FORCEINLINE FString& operator+=(FString Str)
+    {
+        return *this += Str.Data.Data;
     }
 };
 
@@ -226,6 +312,216 @@ FString FNameToString(FName& Name)
     return Parms.ReturnValue;
 }
 
+FString GetCPPType(void* Child)
+{
+#pragma region Hide the copy paste
+#define CheckPropClass(Class) if (!Class) { BasicMessageBox("Didn't Find " #Class " :("); return L""; }
+    static void* BoolPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.BoolProperty", false);
+    static void* ArrayPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.ArrayProperty", false);
+    static void* EnumPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.EnumProperty", false);
+    static void* NumericPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.NumericProperty", false);
+    static void* BytePropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.ByteProperty", false);
+    static void* ObjectPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.ObjectProperty", false);
+    static void* ClassPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.ClassProperty", false);
+    static void* DelegatePropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.DelegateProperty", false);
+    static void* DoublePropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.DoubleProperty", false);
+    static void* FloatPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.FloatProperty", false);
+    static void* IntPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.IntProperty", false);
+    static void* Int16PropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.Int16Property", false);
+    static void* Int64PropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.Int64Property", false);
+    static void* Int8PropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.Int8Property", false);
+    static void* InterfacePropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.InterfaceProperty", false);
+    static void* LazyObjectPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.LazyObjectProperty", false);
+    static void* MapPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.MapProperty", false);
+    static void* MulticastDelegatePropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.MulticastDelegateProperty", false);
+    static void* NamePropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.NameProperty", false);
+    static void* SetPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.SetProperty", false);
+    static void* SoftObjectPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.SoftObjectProperty", false);
+    static void* SoftClassPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.SoftClassProperty", false);
+    static void* StrPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.StrProperty", false);
+    static void* StructPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.StructProperty", false);
+    static void* UInt16PropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.UInt16Property", false);
+    static void* UInt32PropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.UInt32Property", false);
+    static void* UInt64PropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.UInt64Property", false);
+    static void* WeakObjectPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.WeakObjectProperty", false);
+    static void* TextPropertyClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.TextProperty", false);
+    CheckPropClass(BoolPropertyClass);
+    CheckPropClass(ArrayPropertyClass);
+    CheckPropClass(EnumPropertyClass);
+    CheckPropClass(NumericPropertyClass);
+    CheckPropClass(BytePropertyClass);
+    CheckPropClass(ObjectPropertyClass);
+    CheckPropClass(ClassPropertyClass);
+    CheckPropClass(DelegatePropertyClass);
+    CheckPropClass(DoublePropertyClass);
+    CheckPropClass(FloatPropertyClass);
+    CheckPropClass(IntPropertyClass);
+    CheckPropClass(Int16PropertyClass);
+    CheckPropClass(Int64PropertyClass);
+    CheckPropClass(Int8PropertyClass);
+    CheckPropClass(InterfacePropertyClass);
+    CheckPropClass(LazyObjectPropertyClass);
+    CheckPropClass(MapPropertyClass);
+    CheckPropClass(MulticastDelegatePropertyClass);
+    CheckPropClass(NamePropertyClass);
+    CheckPropClass(SetPropertyClass);
+    CheckPropClass(SoftObjectPropertyClass);
+    CheckPropClass(SoftClassPropertyClass);
+    CheckPropClass(StrPropertyClass);
+    CheckPropClass(StructPropertyClass);
+    CheckPropClass(UInt16PropertyClass);
+    CheckPropClass(UInt32PropertyClass);
+    CheckPropClass(UInt64PropertyClass);
+    CheckPropClass(WeakObjectPropertyClass);
+    CheckPropClass(TextPropertyClass);
+#pragma endregion
+
+    void* ClassPrivate = GET_OFFSET(void*, Child, Offsets::ClassPrivateOffset);
+    if (ClassPrivate == BoolPropertyClass)
+    {
+        return L"bool";
+    }
+    else if (ClassPrivate == FloatPropertyClass)
+    {
+        return L"float";
+    }
+    else if (ClassPrivate == DoublePropertyClass)
+    {
+        return L"double";
+    }
+    else if (ClassPrivate == IntPropertyClass)
+    {
+        return L"int32";
+    }
+    else if (ClassPrivate == Int16PropertyClass)
+    {
+        return L"int16";
+    }
+    else if (ClassPrivate == Int64PropertyClass)
+    {
+        return L"int64";
+    }
+    else if (ClassPrivate == Int8PropertyClass)
+    {
+        return L"int8";
+    }
+    else if (ClassPrivate == UInt16PropertyClass)
+    {
+        return L"uint16";
+    }
+    else if (ClassPrivate == UInt32PropertyClass)
+    {
+        return L"uint32";
+    }
+    else if (ClassPrivate == UInt64PropertyClass)
+    {
+        return L"uint64";
+    }
+    else if (ClassPrivate == StrPropertyClass)
+    {
+        return L"FString";
+    } 
+    else if (ClassPrivate == NamePropertyClass)
+    {
+        return L"FName";
+    }
+    else if (ClassPrivate == TextPropertyClass)
+    {
+        return L"FText";
+    }
+    else if (ClassPrivate == ClassPropertyClass)
+    {
+        if (GET_OFFSET(uint64, Child, Offsets::PropertyFlagsOffset) & 0x0004000000000000)
+        {
+            void* PropertyClass = GET_OFFSET(void*, Child, Offsets::PropertyDataOffset);
+            FString ret = L"TSubclassOf<U";
+            ret += FNameToString(GET_OFFSET(FName, PropertyClass, Offsets::NamePrivateOffset));
+            ret += L">";
+            return ret;
+        }
+        else
+        {
+            return L"UClass*";
+        }
+    }
+    else if (ClassPrivate == ObjectPropertyClass)
+    {
+        void* PropertyClass = GET_OFFSET(void*, Child, Offsets::PropertyDataOffset);
+        FString ret = L"U";
+        ret += FNameToString(GET_OFFSET(FName, PropertyClass, Offsets::NamePrivateOffset));
+        ret += L"*";
+        return ret;
+    }
+    else if (ClassPrivate == ArrayPropertyClass)
+    {
+        void* Inner = GET_OFFSET(void*, Child, Offsets::PropertyDataOffset);
+        FString ret = L"TArray<";
+        ret += GetCPPType(Inner);
+        ret += L">";
+        return ret;
+    }
+    else if (ClassPrivate == BytePropertyClass)
+    {
+        void* Enum = GET_OFFSET(void*, Child, Offsets::PropertyDataOffset);
+        if (Enum)
+            return FNameToString(GET_OFFSET(FName, Enum, Offsets::NamePrivateOffset));
+        else
+            return L"uint8";
+    }
+    else if (ClassPrivate == EnumPropertyClass)
+    {
+        void* Enum = GET_OFFSET(void*, Child, Offsets::PropertyDataOffset);
+        return FNameToString(GET_OFFSET(FName, Enum, Offsets::NamePrivateOffset));
+    }
+    else if (ClassPrivate == StructPropertyClass)
+    {
+        void* Struct = GET_OFFSET(void*, Child, Offsets::PropertyDataOffset);
+        auto StructName = FNameToString(GET_OFFSET(FName, Struct, Offsets::NamePrivateOffset));
+        FString ret = L"F";
+        ret += StructName;
+        StructName.Free();
+        return ret;
+    }
+
+    /*
+    * NumericPropertyClass
+    * DelegatePropertyClass
+    * InterfacePropertyClass
+    * LazyObjectPropertyClass
+    * MapPropertyClass
+    * MulticastDelegatePropertyClass
+    * SetPropertyClass
+    * SoftObjectPropertyClass
+    * SoftClassPropertyClass
+    * WeakObjectPropertyClass
+    */
+    
+    PRINT("Unknown type %s", FNameToString(GET_OFFSET(FName, ClassPrivate, Offsets::NamePrivateOffset)).ToString().c_str());
+
+    return L"Unknown";
+}
+
+FString GenerateFuncDesc(void* Func)
+{
+    FString ret;
+    
+    void* Children = GET_OFFSET(void*, Func, Offsets::ChildrenOffset);
+    for (void* Child = Children; Child; Child = GET_OFFSET(void*, Child, Offsets::UFieldNextOffset))
+    {
+        if (GET_OFFSET(uint64, Child, Offsets::PropertyFlagsOffset) & 0x0000000000000080)
+        {
+            auto ChildName = FNameToString(GET_OFFSET(FName, Child, Offsets::NamePrivateOffset));
+            ret += ChildName;
+            ret += L"[";
+            ret += GetCPPType(Child);
+            ret += L"] ";
+            ChildName.Free();
+        }
+    }
+
+    return ret;
+}
+
 struct UConsole
 {
     uint8 pad[104];
@@ -278,14 +574,10 @@ struct UConsole
     // https://github.com/EpicGames/UnrealEngine/blob/4.20/Engine/Source/Runtime/Engine/Private/UserInterface/Console.cpp#L141
     void BuildRuntimeAutoCompleteList()
     {
-        int32 ManualAutoCompleteListOffset = 48;
-        int32 AutoCompleteMapPathsOffset = 64;
-        int32 AutoCompleteCommandColorOffset = 96;
-
-        FColor AutoCompleteCommandColor = GET_OFFSET(FColor, ConsoleSettings, AutoCompleteCommandColorOffset);
+        FColor AutoCompleteCommandColor = GET_OFFSET(FColor, ConsoleSettings, Offsets::AutoCompleteCommandColorOffset);
 
         {
-            TArray<FAutoCompleteCommand> ManualAutoCompleteList = GET_OFFSET(TArray<FAutoCompleteCommand>, ConsoleSettings, ManualAutoCompleteListOffset);
+            TArray<FAutoCompleteCommand> ManualAutoCompleteList = GET_OFFSET(TArray<FAutoCompleteCommand>, ConsoleSettings, Offsets::ManualAutoCompleteListOffset);
             for (int32 i = 0; i < ManualAutoCompleteList.Num(); i++)
             {
                 FAutoCompleteCommand toadd;
@@ -298,9 +590,6 @@ struct UConsole
         }
 
         {
-            int32 ClassPrivateOffset = 16;
-            int32 NamePrivateOffset = 24;
-            int32 FunctionFlagsOffset = 136;
             void* FunctionClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.Function", false);
             PRINT("Total objects: %i", GUObjectArray->Num());
             for (int32 i = 0; i < GUObjectArray->Num(); i++)
@@ -313,15 +602,15 @@ struct UConsole
 
                 // TODO: LevelScriptActor?
 
-                if (GET_OFFSET(void*, obj, ClassPrivateOffset) == FunctionClass)
+                if (GET_OFFSET(void*, obj, Offsets::ClassPrivateOffset) == FunctionClass)
                 {
-                    if (GET_OFFSET(uint32, obj, FunctionFlagsOffset) & 0x00000200)
+                    if (GET_OFFSET(uint32, obj, Offsets::FunctionFlagsOffset) & 0x00000200)
                     {
                         FAutoCompleteCommand test_cmd;
-                        test_cmd.Command = FNameToString(GET_OFFSET(FName, obj, NamePrivateOffset));
+                        test_cmd.Command = FNameToString(GET_OFFSET(FName, obj, Offsets::NamePrivateOffset));
                         test_cmd.Color = AutoCompleteCommandColor;
-
-                        // TODO: Generate description
+                        auto desc = GenerateFuncDesc(obj);
+                        test_cmd.Desc = desc;
 
                         AutoCompleteList.Add(test_cmd);
                     }
@@ -406,6 +695,10 @@ DWORD WINAPI Main(LPVOID lpParam)
     CheckAddr(FMemoryReallocAddr, "Failed to find FMemoryRealloc");
     FMemoryRealloc = decltype(FMemoryRealloc)(FMemoryReallocAddr);
     
+    auto FMemoryMallocAddr = Memcury::Scanner::FindPattern("4C 8B C9 48 8B 0D ? ? ? ? 48 85 C9").Get();
+    CheckAddr(FMemoryMallocAddr, "Failed to find FMemoryMalloc");
+    FMemoryMalloc = decltype(FMemoryMalloc)(FMemoryMallocAddr);
+    
     auto ObjectsArrAddr = Memcury::Scanner::FindPattern("48 8B 05 ? ? ? ? 48 8D 1C C8 81 4B ? ? ? ? ? 49 63 76").RelativeOffset(3).Get();
     CheckAddr(ObjectsArrAddr, "Failed to find ObjectsArray");
     GUObjectArray = decltype(GUObjectArray)(ObjectsArrAddr);
@@ -418,10 +711,14 @@ DWORD WINAPI Main(LPVOID lpParam)
     CheckAddr(FindPackagesAddr, "Failed to find FindPackagesInDirectory");
     FindPackagesInDirectory = decltype(FindPackagesInDirectory)(FindPackagesAddr);*/
 
-    PRINT("Press F9 to construct console");
+    //FString test;
+    //for (int32 i = 0; i < 100; i++)
+    //{
+    //    test += std::to_wstring(i).c_str();
+    //}
+    //PRINT("TEST: %s", test.ToString().c_str());
 
-    int32 GameViewportClientOffset = 1832;
-    int32 ViewportConsoleOffset = 64;
+    PRINT("Press F9 to construct console");
 
     while (true)
     {
@@ -441,8 +738,8 @@ DWORD WINAPI Main(LPVOID lpParam)
                 break;
             }
 
-            auto GameViewport = GET_OFFSET(void*, Engine, GameViewportClientOffset);
-            auto ViewportConsole = GET_OFFSETPTR(void*, GameViewport, ViewportConsoleOffset);
+            auto GameViewport = GET_OFFSET(void*, Engine, Offsets::GameViewportClientOffset);
+            auto ViewportConsole = GET_OFFSETPTR(void*, GameViewport, Offsets::ViewportConsoleOffset);
 
             auto ConstructedConsole = (UConsole*)StaticConstructObject_Internal(ConsoleClass, GameViewport, 0, 0, 0, nullptr, false, nullptr, false);
             if (!ConstructedConsole)
