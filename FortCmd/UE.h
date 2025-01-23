@@ -175,6 +175,10 @@ struct FString
     {
         return *this += Str.Data.Data;
     }
+    FORCEINLINE bool operator==(const wchar_t* Str)
+    {
+        return memcmp(Data.Data, Str, Len()) == 0;
+    }
 };
 
 template<int32 Size, uint32 Alignment>
@@ -531,10 +535,12 @@ struct UObject
         return GET_OFFSET(FName, this, Offsets::NamePrivateOffset);
     }
 
-    UObject*& ClassPrivate()
+    struct UStruct*& ClassPrivate()
     {
-        return GET_OFFSET(UObject*, this, Offsets::ClassPrivateOffset);
+        return GET_OFFSET(struct UStruct*, this, Offsets::ClassPrivateOffset);
     }
+
+
 };
 
 struct UField : public UObject
@@ -551,13 +557,43 @@ struct UProperty : public UField
     {
         return GET_OFFSET(uint64, this, Offsets::PropertyFlagsOffset);
     }
+
+    int32& Offset_Internal()
+    {
+        return GET_OFFSET(int32, this, Offsets::Offset_Internal);
+    }
 };
 
 struct UStruct : public UField
 {
+    UStruct*& SuperStruct()
+    {
+        return GET_OFFSET(UStruct*, this, Offsets::SuperStruct);
+    }
+
     UField*& Children()
     {
         return GET_OFFSET(UField*, this, Offsets::ChildrenOffset);
+    }
+
+    int32 GetChildOffset(const wchar_t* Name)
+    {
+        for (auto Struct = this; Struct; Struct = Struct->SuperStruct())
+        {
+            for (auto Child = Struct->Children(); Child; Child = Child->Next())
+            {
+                auto ChildName = FNameToString(Child->NamePrivate());
+                if (ChildName == Name)
+                {
+                    ChildName.Free();
+
+                    return ((UProperty*)Child)->Offset_Internal();
+                }
+                ChildName.Free();
+            }
+        }
+
+        return -1;
     }
 };
 
@@ -566,6 +602,12 @@ struct UFunction : public UStruct
     uint32& FunctionFlags()
     {
         return GET_OFFSET(uint32, this, Offsets::FunctionFlagsOffset);
+    }
+
+    static void* StaicClass()
+    {
+        static void* FunctionClass = FindObject(L"/Script/CoreUObject.Function");
+        return FunctionClass;
     }
 };
 

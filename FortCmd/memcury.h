@@ -48,6 +48,7 @@
 #include <DbgHelp.h>
 #pragma comment(lib, "Dbghelp.lib")
 
+#if 0
 #define MemcuryAssert(cond)                                              \
     if (!(cond))                                                         \
     {                                                                    \
@@ -65,6 +66,11 @@
 #define MemcuryThrow(msg)                                          \
     MessageBoxA(nullptr, msg, __FUNCTION__, MB_ICONERROR | MB_OK); \
     Memcury::Safety::FreezeCurrentThread();
+#else
+#define MemcuryAssert(cond)
+#define MemcuryAssertM(cond, msg)
+#define MemcuryThrow(msg)
+#endif
 
 namespace Memcury
 {

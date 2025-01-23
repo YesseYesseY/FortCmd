@@ -7,8 +7,6 @@
 
 #define ALLOC_CONSOLE
 
-#define CheckAddr(Addr, FailMsg) if (!Addr) { BasicMessageBox(FailMsg); return 0; }
-
 #ifdef ALLOC_CONSOLE
 #define PRINT(str, ...) printf(str "\n", __VA_ARGS__)
 #else
@@ -45,9 +43,12 @@ bool(__fastcall* FindPackagesInDirectory)(
     const FString& a2
     );
 
-__int64 (__fastcall* ProjectDir)(
-    FString& a1
-    );
+UObject* GetEngine()
+{
+    static UObject* Engine = (UObject*)FindObject(L"/Engine/Transient.FortEngine_0");
+
+    return Engine;
+}
 
 FString GenerateFuncDesc(UFunction* Func)
 {
@@ -113,8 +114,6 @@ struct UConsole
         }
 
         {
-            void* FunctionClass = FindObject(L"/Script/CoreUObject.Function");
-            
             for (int32 i = 0; i < GUObjectArray->Num(); i++)
             {
                 UObject* obj = (UObject*)GUObjectArray->GetObj(i);
@@ -125,7 +124,7 @@ struct UConsole
 
                 // TODO: LevelScriptActor?
 
-                if (obj->ClassPrivate() == FunctionClass)
+                if (obj->ClassPrivate() == UFunction::StaicClass())
                 {
                     auto func = (UFunction*)obj;
                     if (func->FunctionFlags() & 0x00000200)
@@ -143,8 +142,10 @@ struct UConsole
         }
         
         {
-            FString ret;
-            ProjectDir(ret);
+            FString ret = L"../../../FortniteGame/";
+            /*if (ProjectDir)
+                ProjectDir(ret);
+            else*/
             TArray<FString> Packages;
             auto AutoCompleteMapPaths = ConsoleSettings->AutoCompleteMapPaths();
             AutoCompleteMapPaths.Add(L"Content/Athena/Maps");
@@ -157,6 +158,7 @@ struct UConsole
             }
             ret.Free();
 
+            PRINT("Found %i packages", Packages.Num());
             for (int32 i = 0; i < Packages.Num(); i++)
             {
                 if (Packages[i].EndsWith(L".umap"))
@@ -228,6 +230,8 @@ struct UConsole
     }
 };
 
+#define CheckAddr(Addr, FailMsg) if (!Addr.IsValid()) { BasicMessageBox(FailMsg); return 0; }
+
 DWORD WINAPI Main(LPVOID lpParam)
 {
 #ifdef ALLOC_CONSOLE
@@ -236,46 +240,42 @@ DWORD WINAPI Main(LPVOID lpParam)
     freopen_s(&f, "CONOUT$", "w", stdout);
 #endif // ALLOC_CONSOLE
 
-    auto ConstructObjectAddr = Memcury::Scanner::FindPattern("4C 89 44 24 ? 53 55 56 57 41 54 41 56 41 57 48 81 EC B0 01 00 00").Get();
+    auto ConstructObjectAddr = Memcury::Scanner::FindPattern("4C 89 44 24 ? 53 55 56 57 41 54 41 56 41 57 48 81 EC B0 01 00 00");
     CheckAddr(ConstructObjectAddr, "Failed to find StaticConstructObject_Internal");
-    Natives::StaticConstructObject_Internal = decltype(Natives::StaticConstructObject_Internal)(ConstructObjectAddr);
+    Natives::StaticConstructObject_Internal = decltype(Natives::StaticConstructObject_Internal)(ConstructObjectAddr.Get());
     
-    auto FindObjectAddr = Memcury::Scanner::FindPattern("48 89 5C 24 ? 48 89 74 24 ? 55 57 41 54 41 56 41 57 48 8B EC 48 83 EC 60 80 3D ? ? ? ? ? 45 0F B6 F1").Get();
+    auto FindObjectAddr = Memcury::Scanner::FindPattern("48 89 5C 24 ? 48 89 74 24 ? 55 57 41 54 41 56 41 57 48 8B EC 48 83 EC 60 80 3D ? ? ? ? ? 45 0F B6 F1");
     CheckAddr(FindObjectAddr, "Failed to find StaticFindObject");
-    Natives::StaticFindObject = decltype(Natives::StaticFindObject)(FindObjectAddr);
+    Natives::StaticFindObject = decltype(Natives::StaticFindObject)(FindObjectAddr.Get());
     
-    auto FMemoryFreeAddr = Memcury::Scanner::FindPattern("48 85 C9 74 ? 4C 8B 05 ? ? ? ? 4D 85 C0 0F 84").Get();
+    auto FMemoryFreeAddr = Memcury::Scanner::FindPattern("48 85 C9 74 ? 4C 8B 05 ? ? ? ? 4D 85 C0 0F 84");
     CheckAddr(FMemoryFreeAddr, "Failed to find FMemoryFree");
-    Natives::FMemoryFree = decltype(Natives::FMemoryFree)(FMemoryFreeAddr);
+    Natives::FMemoryFree = decltype(Natives::FMemoryFree)(FMemoryFreeAddr.Get());
     
-    auto FMemoryReallocAddr = Memcury::Scanner::FindPattern("4C 8B D1 48 8B 0D ? ? ? ? 48 85 C9 75 ? 49 8B CA").Get();
+    auto FMemoryReallocAddr = Memcury::Scanner::FindPattern("4C 8B D1 48 8B 0D ? ? ? ? 48 85 C9 75 ? 49 8B CA");
     CheckAddr(FMemoryReallocAddr, "Failed to find FMemoryRealloc");
-    Natives::FMemoryRealloc = decltype(Natives::FMemoryRealloc)(FMemoryReallocAddr);
+    Natives::FMemoryRealloc = decltype(Natives::FMemoryRealloc)(FMemoryReallocAddr.Get());
     
-    auto FMemoryMallocAddr = Memcury::Scanner::FindPattern("4C 8B C9 48 8B 0D ? ? ? ? 48 85 C9").Get();
+    auto FMemoryMallocAddr = Memcury::Scanner::FindPattern("4C 8B C9 48 8B 0D ? ? ? ? 48 85 C9");
     CheckAddr(FMemoryMallocAddr, "Failed to find FMemoryMalloc");
-    Natives::FMemoryMalloc = decltype(Natives::FMemoryMalloc)(FMemoryMallocAddr);
+    Natives::FMemoryMalloc = decltype(Natives::FMemoryMalloc)(FMemoryMallocAddr.Get());
     
-    auto ObjectsArrAddr = Memcury::Scanner::FindPattern("48 8B 05 ? ? ? ? 48 8D 1C C8 81 4B ? ? ? ? ? 49 63 76").RelativeOffset(3).Get();
+    auto ObjectsArrAddr = Memcury::Scanner::FindPattern("48 8B 05 ? ? ? ? 48 8D 14 C8 EB ? 33 D2 81 4A ? ? ? ? ? 8B 46");
     CheckAddr(ObjectsArrAddr, "Failed to find ObjectsArray");
-    GUObjectArray = decltype(GUObjectArray)(ObjectsArrAddr);
+    GUObjectArray = decltype(GUObjectArray)(ObjectsArrAddr.RelativeOffset(3).Get());
     
-    auto ProcessEventAddr = Memcury::Scanner::FindPattern("40 55 56 57 41 54 41 55 41 56 41 57 48 81 EC F0 00 00 00").Get();
+    auto ProcessEventAddr = Memcury::Scanner::FindPattern("40 55 56 57 41 54 41 55 41 56 41 57 48 81 EC F0 00 00 00");
     CheckAddr(ProcessEventAddr, "Failed to find ProcessEvent");
-    Natives::ProcessEvent = decltype(Natives::ProcessEvent)(ProcessEventAddr);
-
-    auto ConsoleManagerAddr = Memcury::Scanner::FindPattern("48 89 05 ? ? ? ? 48 8B C8 48 85 C0").RelativeOffset(3).GetAs<FConsoleManager**>();
-    CheckAddr(ConsoleManagerAddr, "Failed to find ConsoleManager");
-    ConsoleManager = *ConsoleManagerAddr;
-
-    auto FindPackagesAddr = Memcury::Scanner::FindPattern("48 8B C4 53 56 48 83 EC 68 48 89 68").Get();
-    CheckAddr(FindPackagesAddr, "Failed to find FindPackagesInDirectory");
-    FindPackagesInDirectory = decltype(FindPackagesInDirectory)(FindPackagesAddr);
+    Natives::ProcessEvent = decltype(Natives::ProcessEvent)(ProcessEventAddr.Get());
     
-    auto ProjectDirAddr = Memcury::Scanner::FindPattern("48 89 74 24 ? 57 48 83 EC 20 48 8B F9 E8 ? ? ? ? 48 8B F0 33 C0 48 89 07 48 89 47 ? 48 85 F6 74 ? 66 39 06 74 ? 48 89 5C 24 ? 48 83 CB FF 48 FF C3 66 39 04 5E 75 ? FF C3 89 5F ? 85 DB 7E ? 33 D2 48 8B CF E8 ? ? ? ? 48 8B 0F 48 8B D6 4C 63 C3 4D 03 C0 E8 ? ? ? ? 48 8B 5C 24 ? 48 8B C7 48 8B 74 24 ? 48 83 C4 20 5F C3 CC 34 75").Get();
-    CheckAddr(ProjectDirAddr, "Failed to find ProjectDir");
-    ProjectDir = decltype(ProjectDir)(ProjectDirAddr);
-
+    auto ConsoleManagerAddr = Memcury::Scanner::FindPattern("48 89 05 ? ? ? ? 48 8B C8 48 85 C0");
+    CheckAddr(ConsoleManagerAddr, "Failed to find ConsoleManager");
+    ConsoleManager = *ConsoleManagerAddr.RelativeOffset(3).GetAs<FConsoleManager**>();;
+    
+    auto FindPackagesAddr = Memcury::Scanner::FindPattern("48 8B C4 53 56 48 83 EC 68 48 89 68");
+    CheckAddr(FindPackagesAddr, "Failed to find FindPackagesInDirectory");
+    FindPackagesInDirectory = decltype(FindPackagesInDirectory)(FindPackagesAddr.Get());
+    
     Offsets::Init();
 
     /*
@@ -291,7 +291,7 @@ DWORD WINAPI Main(LPVOID lpParam)
     {
         if (KeyPressed(VK_F9))
         {
-            auto Engine = FindObject(L"/Engine/Transient.FortEngine_0");
+            auto Engine = GetEngine();
             if (!Engine)
             {
                 BasicMessageBox("Didn't find engine :(");

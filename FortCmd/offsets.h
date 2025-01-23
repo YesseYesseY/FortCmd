@@ -18,6 +18,8 @@ namespace Offsets
     int32 PropertyFlagsOffset;
     int32 ConsoleObjectsOffset;
     int32 OuterPrivateOffset;
+    int32 SuperStruct;
+    int32 Offset_Internal;
 
     void Init()
     {
@@ -37,5 +39,7 @@ namespace Offsets
         PropertyFlagsOffset = 56;
         ConsoleObjectsOffset = 8;
         OuterPrivateOffset = 32;
+        SuperStruct = 48;
+        Offset_Internal = 68;
     }
 }
