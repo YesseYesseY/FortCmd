@@ -144,6 +144,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="memcury.h" />
+    <ClInclude Include="natives.h" />
+    <ClInclude Include="offsets.h" />
+    <ClInclude Include="UE.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
