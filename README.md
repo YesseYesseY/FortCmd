@@ -4,9 +4,6 @@ Currently only tested on 4.1 <br>
 Inspiration: [UniversalFNConsole](https://github.com/notsamicc/UniversalFNConsole)
 
 # Todo
-
- - Autocomplete for:
-   - Maps (open {map name})
  - Support for more versions
 
 # Things used

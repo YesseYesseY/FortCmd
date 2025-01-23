@@ -50,6 +50,7 @@ namespace Offsets
     int32 PropertyDataOffset = 112;
     int32 PropertyFlagsOffset = 56;
     int32 ConsoleObjectsOffset = 8;
+    int32 OuterPrivateOffset = 32;
 }
 
 void* /* UObject* */ (__fastcall* StaticConstructObject_Internal)(
@@ -163,7 +164,7 @@ struct FString
 
     FORCEINLINE FString()
     {
-
+        
     }
 
     FORCEINLINE FString(const wchar_t* Str)
@@ -173,6 +174,44 @@ struct FString
         memcpy(Data.Data, Str, sizeof(wchar_t) * size);
         Data.ArrayNum = size;
         Data.ArrayMax = size;
+    }
+
+    bool EndsWith(const wchar_t* Str)
+    {
+        int32 StrSize = wcslen(Str);
+        int32 offset = Len() - StrSize;
+        for (int32 i = offset; i < Len(); i++)
+        {
+            if (Data[i] != Str[i - offset])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    int32 FindLastOf(wchar_t Char)
+    {
+        int32 ret = -1;
+        for (int32 i = 0; i < Len(); i++)
+            if (Data[i] == Char)
+                ret = i;
+        return ret;
+    }
+
+    FString Substring(int32 start, int32 length)
+    {
+        FString ret;
+        ret.Data.Data = (wchar_t*)FMemoryMalloc((length + 1) * sizeof(wchar_t), 0);
+        ret.Data.ArrayNum = length + 1;
+        ret.Data.ArrayMax = length + 1;
+        memcpy(
+            (void*)ret.Data.Data,
+            (void*)((uint64)Data.Data + (start * sizeof(wchar_t))),
+            length * sizeof(wchar_t)
+        );
+        ret.Data.Data[length] = L'\0';
+        return ret;
     }
 
     FORCEINLINE int32 Len() const
@@ -190,6 +229,20 @@ struct FString
     {
         auto wstr = std::wstring(Data.Data);
         return std::string(wstr.begin(), wstr.end());
+    }
+
+    FORCEINLINE FString Copy()
+    {
+        FString ret;
+        ret.Data.ArrayMax = Data.ArrayMax;
+        ret.Data.ArrayNum = Data.ArrayNum;
+        ret.Data.Data = (wchar_t*)FMemoryMalloc(sizeof(wchar_t) * ret.Data.ArrayNum, 0);
+        memcpy(
+            (void*)ret.Data.Data,
+            (void*)Data.Data,
+            ret.Data.ArrayNum * sizeof(wchar_t)
+        );
+        return ret;
     }
 
     FORCEINLINE FString& operator+=(const wchar_t* Str)
@@ -369,6 +422,10 @@ static ObjectArray* GUObjectArray;
 bool(__fastcall* FindPackagesInDirectory)(
     TArray<FString>& a1,
     const FString& a2
+    );
+
+__int64 (__fastcall* ProjectDir)(
+    FString& a1
     );
 
 #define INDEX_NONE -1
@@ -723,7 +780,7 @@ struct UConsole
 
         {
             void* FunctionClass = StaticFindObject(nullptr, nullptr, L"/Script/CoreUObject.Function", false);
-            PRINT("Total objects: %i", GUObjectArray->Num());
+            
             for (int32 i = 0; i < GUObjectArray->Num(); i++)
             {
                 void* obj = GUObjectArray->GetObj(i);
@@ -751,6 +808,40 @@ struct UConsole
         }
         
         {
+            FString ret;
+            ProjectDir(ret);
+            TArray<FString> Packages;
+            auto AutoCompleteMapPaths = GET_OFFSET(TArray<FString>, ConsoleSettings, Offsets::AutoCompleteMapPathsOffset);
+            AutoCompleteMapPaths.Add(L"Content/Athena/Maps");
+            for (int i = 0; i < AutoCompleteMapPaths.Num(); i++)
+            {
+                FString tosearch = ret.Copy();
+                tosearch += AutoCompleteMapPaths[i];
+                FindPackagesInDirectory(Packages, tosearch);
+                tosearch.Free();
+            }
+            ret.Free();
+
+            for (int32 i = 0; i < Packages.Num(); i++)
+            {
+                if (Packages[i].EndsWith(L".umap"))
+                {
+                    int32 posofslash = Packages[i].FindLastOf(L'/') + 1;
+                    auto substr = Packages[i].Substring(posofslash, (Packages[i].Len() - 5) - posofslash);
+                    FString Final = L"open ";
+                    Final += substr;
+                    substr.Free();
+
+                    FAutoCompleteCommand test_cmd;
+                    test_cmd.Command = Final;
+                    test_cmd.Color = AutoCompleteCommandColor;
+                    AutoCompleteList.Add(test_cmd);
+                }
+                Packages[i].Free();
+            }
+        }
+
+        {
             FAutoCompleteCommand test_cmd;
             test_cmd.Command = FString(L"open 127.0.0.1");
             test_cmd.Desc = FString(L"(opens connection to localhost)");
@@ -758,17 +849,6 @@ struct UConsole
             AutoCompleteList.Add(test_cmd);
         }
 
-#if 0 // Does not work
-        {
-            TArray<FString> AutoCompleteMapPaths = *(TArray<FString>*)((uint64)ConsoleSettings + AutoCompleteMapPathsOffset);
-            TArray<FString> Packages;
-            for (int32 i = 0; i < AutoCompleteMapPaths.Num(); i++)
-            {
-                FindPackagesInDirectory(Packages, AutoCompleteMapPaths[i]);
-                PRINT("Map count: %i", Packages.Num());
-            }
-        }
-#endif
         {
             typedef TMap<FString, void*> COType;
             auto ConsoleObjects = GET_OFFSET(COType, ConsoleManager, Offsets::ConsoleObjectsOffset);
@@ -854,16 +934,19 @@ DWORD WINAPI Main(LPVOID lpParam)
     CheckAddr(ConsoleManagerAddr, "Failed to find ConsoleManager");
     ConsoleManager = *ConsoleManagerAddr;
 
-    /*auto FindPackagesAddr = Memcury::Scanner::FindPattern("48 8B C4 53 56 48 83 EC 68 48 89 68").Get();
+    auto FindPackagesAddr = Memcury::Scanner::FindPattern("48 8B C4 53 56 48 83 EC 68 48 89 68").Get();
     CheckAddr(FindPackagesAddr, "Failed to find FindPackagesInDirectory");
-    FindPackagesInDirectory = decltype(FindPackagesInDirectory)(FindPackagesAddr);*/
+    FindPackagesInDirectory = decltype(FindPackagesInDirectory)(FindPackagesAddr);
+    
+    auto ProjectDirAddr = Memcury::Scanner::FindPattern("48 89 74 24 ? 57 48 83 EC 20 48 8B F9 E8 ? ? ? ? 48 8B F0 33 C0 48 89 07 48 89 47 ? 48 85 F6 74 ? 66 39 06 74 ? 48 89 5C 24 ? 48 83 CB FF 48 FF C3 66 39 04 5E 75 ? FF C3 89 5F ? 85 DB 7E ? 33 D2 48 8B CF E8 ? ? ? ? 48 8B 0F 48 8B D6 4C 63 C3 4D 03 C0 E8 ? ? ? ? 48 8B 5C 24 ? 48 8B C7 48 8B 74 24 ? 48 83 C4 20 5F C3 CC 34 75").Get();
+    CheckAddr(ProjectDirAddr, "Failed to find ProjectDir");
+    ProjectDir = decltype(ProjectDir)(ProjectDirAddr);
 
-    //FString test;
-    //for (int32 i = 0; i < 100; i++)
-    //{
-    //    test += std::to_wstring(i).c_str();
-    //}
-    //PRINT("TEST: %s", test.ToString().c_str());
+    /*
+    * Notes:
+    * Can get version from KismetSystemLibrary.GetEngineVersion prob useful for porting to other versions
+    * At some point AFTER 4.1 they added KismetSystemLibrary.GetProjectDirectory which could maybe be a replacement for ProjectDir()
+    */
 
     PRINT("Press F9 to construct console");
 
