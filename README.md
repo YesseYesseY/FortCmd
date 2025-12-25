@@ -3,7 +3,7 @@ A dll for fortnite that unlocks the console<br>
 Inspiration: [UniversalFNConsole](https://github.com/notsamicc/UniversalFNConsole)
 
 # Supported Versions
-26.30
+24.40, 26.30, 28.30
 
 # Features
  - Unlocking console

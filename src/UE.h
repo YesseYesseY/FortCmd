@@ -217,6 +217,9 @@ struct UObject
         if (!StaticFindObject)
         {
             auto Addr = Memcury::Scanner::FindPattern("48 89 74 24 ? 48 89 7C 24 ? 55 41 54 41 55 41 56 41 57 48 8B EC 48 83 EC 60 4C 8B E9 48 8D 4D").Get();
+            
+            if (!Addr)
+                Addr = Memcury::Scanner::FindPattern("48 89 5C 24 ? 48 89 74 24 ? 48 89 7C 24 ? 55 41 56 41 57 48 8B EC 48 83 EC 60 33 DB 4C 8B F9").Get();
 
             if (!Addr)
             {
@@ -235,6 +238,19 @@ struct UObject
         if (!ProcessEventNative)
         {
             auto Addr = Memcury::Scanner::FindPattern("40 55 56 57 41 54 41 55 41 56 41 57 48 81 EC 20 01 00 00 48 8D 6C 24 ? 48 89 9D ? ? ? ? 48 8B 05").Get();
+
+            if (!Addr)
+            {
+                uint8 thing[] = { 0x40, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56 };
+                for (int i = 0x40; i < 0x50; i++)
+                {
+                    if (memcmp((uint8*)(VTable[i]), thing, 10) == 0)
+                    {
+                        Addr = (uintptr_t)VTable[i];
+                        break;
+                    }
+                }
+            }
 
             if (!Addr)
             {
