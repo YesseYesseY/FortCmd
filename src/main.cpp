@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <format>
 #include <string>
+#include <fstream>
 #include <Minhook.h>
 
 #include "memcury.h"
@@ -64,13 +65,26 @@ bool UWorldExecHook(UObject* World, UObject* WorldPart2, const wchar_t* Cmd, int
     static int32 PlayerControllerOffset = LocalPlayers[0]->GetOffset("PlayerController");
     auto PlayerController = LocalPlayers[0]->GetChild(PlayerControllerOffset);
 
-    if (wcscmp(Cmd, L"givemecheats") == 0)
+#define CheckCmd(cmdname) wcscmp(Cmd, cmdname) == 0
+
+    if (CheckCmd(L"givemecheats"))
     {
         static int32 CheatManagerOffset = PlayerController->GetOffset("CheatManager");
         static UObject* CheatManagerClass = UObject::FindObject(L"/Script/Engine.CheatManager");
         PlayerController->GetChild(CheatManagerOffset) = SpawnObject(CheatManagerClass, PlayerController);
 
         return true;
+    }
+    else if (CheckCmd(L"dumpobjects"))
+    {
+        std::ofstream outfile("objects.txt");
+        for (int i = 0; i < UObject::Objects->Num(); i++)
+        {
+            auto Object = UObject::Objects->Get(i);
+            if (!Object) continue;
+            outfile << Object->GetFullName() << '\n';
+        }
+        outfile.close();
     }
 
     return UWorldExecOriginal(World, WorldPart2, Cmd, a4);

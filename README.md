@@ -1,10 +1,16 @@
 # FortCmd
-A dll that unlocks the console for fortnite with autocomplete generation <br>
-Currently only tested on 26.30 <br>
+A dll for fortnite that unlocks the console<br>
 Inspiration: [UniversalFNConsole](https://github.com/notsamicc/UniversalFNConsole)
 
-# Todo
- - Support for more versions
+# Supported Versions
+26.30
+
+# Features
+ - Unlocking console
+ - Console usable in loading screen
+ - Custom Commands
+   - givemecheats - Spawns CheatManager for local player
+   - dumpobjects - Object dump into objects.txt
 
 # Things used
  - [Memcury](https://github.com/kem0x/Memcury/)

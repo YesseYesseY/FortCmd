@@ -154,6 +154,19 @@ struct UObject
         return NamePrivate.ToString();
     }
 
+    std::string GetFullName()
+    {
+        static auto Lib = UObject::FindObject(L"/Script/Engine.Default__KismetSystemLibrary");
+        static auto Func = UObject::FindObject(L"/Script/Engine.KismetSystemLibrary.GetPathName"); // I hope this function isn't something they added in like ue5 because im too lazy to do the proper GetFullName
+        struct
+        {
+            UObject* Object;
+            FString ReturnValue;
+        } args {this};
+        Lib->ProcessEvent(Func, &args);
+        return std::format("{} {}", ClassPrivate->GetName(), args.ReturnValue.ToString());
+    }
+
     static inline FChunkedFixedUObjectArray* Objects = nullptr;
 
     static inline UObject* (*StaticFindObject)(UObject* Class, UObject* Outer, const wchar_t* Name, bool ExactClass) = nullptr;
