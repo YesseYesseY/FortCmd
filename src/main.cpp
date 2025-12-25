@@ -54,6 +54,28 @@ void RequestExitHook()
     return;
 }
 
+bool (*UWorldExecOriginal)(UObject*, UObject*, const wchar_t*, int64);
+bool UWorldExecHook(UObject* World, UObject* WorldPart2, const wchar_t* Cmd, int64 a4)
+{
+    static int32 OwningGameInstanceOffset = World->GetOffset("OwningGameInstance");
+    UObject* OwningGameInstance = World->GetChild(OwningGameInstanceOffset);
+    static int32 LocalPlayersOffset = OwningGameInstance->GetOffset("LocalPlayers");
+    auto LocalPlayers = OwningGameInstance->GetChild<TArray<UObject*>>(LocalPlayersOffset);
+    static int32 PlayerControllerOffset = LocalPlayers[0]->GetOffset("PlayerController");
+    auto PlayerController = LocalPlayers[0]->GetChild(PlayerControllerOffset);
+
+    if (wcscmp(Cmd, L"givemecheats") == 0)
+    {
+        static int32 CheatManagerOffset = PlayerController->GetOffset("CheatManager");
+        static UObject* CheatManagerClass = UObject::FindObject(L"/Script/Engine.CheatManager");
+        PlayerController->GetChild(CheatManagerOffset) = SpawnObject(CheatManagerClass, PlayerController);
+
+        return true;
+    }
+
+    return UWorldExecOriginal(World, WorldPart2, Cmd, a4);
+}
+
 DWORD WINAPI Main(LPVOID lpParam)
 {
 #ifdef ALLOC_CONSOLE
@@ -105,6 +127,19 @@ DWORD WINAPI Main(LPVOID lpParam)
         }
 
         HookFunction(Addr, RequestExitHook);
+    }
+
+    // UWorld::Exec
+    {
+        auto Addr = Memcury::Scanner::FindStringRef(L"FLUSHPERSISTENTDEBUGLINES", true).ScanFor({0xCC}, false).Get() + 1;
+
+        if (!Addr)
+        {
+            SimpleMessageBox("Couldn't find UWorld::Exec");
+            return 0;
+        }
+
+        HookFunction(Addr, UWorldExecHook, &UWorldExecOriginal);
     }
 
     // Allows for console input on loadingscreen
