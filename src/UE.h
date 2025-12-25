@@ -22,20 +22,21 @@ namespace Offsets
 {
     namespace UStruct
     {
-        int32 ChildProperties = 0x50;
-        int32 SuperStruct = 0x40;
+        int32 ChildProperties = -1;
+        int32 SuperStruct = -1;
+        int32 PropertiesSize = -1;
     }
 
     // Idk if this changes so maybe can turn FField into its own struct
     namespace FField
     {
-        int32 Next = 0x18;
-        int32 Name = 0x20;
+        int32 Next = -1;
+        int32 Name = -1;
     }
 
     namespace FProperty
     {
-        int32 Offset_Internal = 0x3C;
+        int32 Offset_Internal = -1;
     }
 }
 
@@ -140,12 +141,21 @@ struct FChunkedFixedUObjectArray
     }
 };
 
-struct UObject
+struct BaseStuff
+{
+    template <typename T>
+    T& BaseGetChild(int32 Offset)
+    {
+        return *(T*)(int64(this) + Offset);
+    }
+};
+
+struct UObject : BaseStuff
 {
     void** VTable;
     EObjectFlags ObjectFlags;
     int32 InternalIndex;
-    UObject* /*UClass*/ ClassPrivate;
+    struct UStruct* ClassPrivate;
     FName NamePrivate;
     UObject* OuterPrivate;
 
@@ -154,18 +164,7 @@ struct UObject
         return NamePrivate.ToString();
     }
 
-    std::string GetFullName()
-    {
-        static auto Lib = UObject::FindObject(L"/Script/Engine.Default__KismetSystemLibrary");
-        static auto Func = UObject::FindObject(L"/Script/Engine.KismetSystemLibrary.GetPathName"); // I hope this function isn't something they added in like ue5 because im too lazy to do the proper GetFullName
-        struct
-        {
-            UObject* Object;
-            FString ReturnValue;
-        } args {this};
-        Lib->ProcessEvent(Func, &args);
-        return std::format("{} {}", ClassPrivate->GetName(), args.ReturnValue.ToString());
-    }
+    std::string GetFullName();
 
     static inline FChunkedFixedUObjectArray* Objects = nullptr;
 
@@ -178,20 +177,7 @@ struct UObject
         return *(T*)(int64(this) + Offset);
     }
 
-    int32 GetOffset(std::string Name)
-    {
-        for (auto Class = ClassPrivate; Class; Class = Class->GetChild(Offsets::UStruct::SuperStruct))
-        {
-            // This is not a UObject but might aswell treat it like one just to use GetChild
-            for (auto Child = Class->GetChild(Offsets::UStruct::ChildProperties); Child; Child = Child->GetChild(Offsets::FField::Next))
-            {
-                if (Child->GetChild<FName>(Offsets::FField::Name).ToString() == Name)
-                    return Child->GetChild<int32>(Offsets::FProperty::Offset_Internal);
-            }
-        }
-
-        return -1;
-    }
+    int32 GetOffset(std::string Name);
 
     template <typename T = UObject*>
     T& GetChild(std::string Name)
@@ -199,18 +185,7 @@ struct UObject
         return *(T*)(int64(this) + GetOffset(Name));
     }
 
-    bool IsA(UObject* OtherClass)
-    {
-        for (auto Class = ClassPrivate; Class; Class = Class->GetChild(Offsets::UStruct::SuperStruct))
-        {
-            if (Class = OtherClass)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    bool IsA(UObject* OtherClass);
 
     static UObject* FindObject(const wchar_t* Name, UObject* Class = nullptr, bool ExactClass = false, UObject* Outer = nullptr)
     {
@@ -277,4 +252,100 @@ std::string FName::ToString()
     auto ret = args.ReturnValue.ToString();
     // args.ReturnValue.Free();
     return ret;
+}
+
+struct FField : BaseStuff
+{
+    FField* GetNext()
+    {
+        return BaseGetChild<FField*>(Offsets::FField::Next);
+    }
+
+    std::string GetName()
+    {
+        return BaseGetChild<FName>(Offsets::FField::Name).ToString();
+    }
+};
+
+struct FProperty : FField
+{
+    int32 GetOffset()
+    {
+        return BaseGetChild<int32>(Offsets::FProperty::Offset_Internal);
+    }
+};
+
+struct UField : UObject
+{
+};
+
+struct UStruct : UField
+{
+    FField* GetChildProperties()
+    {
+        return BaseGetChild<FField*>(Offsets::UStruct::ChildProperties);
+    }
+
+    UStruct* GetSuperStruct()
+    {
+        return BaseGetChild<UStruct*>(Offsets::UStruct::SuperStruct);
+    }
+
+    int32 GetSize()
+    {
+        return BaseGetChild<int32>(Offsets::UStruct::PropertiesSize);
+    }
+};
+
+int32 UObject::GetOffset(std::string Name)
+{
+    for (auto Class = ClassPrivate ? ClassPrivate : (UStruct*)this; Class; Class = Class->GetSuperStruct())
+    {
+        // This is not a UObject but might aswell treat it like one just to use GetChild
+        for (auto Child = Class->GetChildProperties(); Child; Child = Child->GetNext())
+        {
+            if (Child->GetName() == Name)
+                return ((FProperty*)Child)->GetOffset();
+        }
+    }
+
+    return -1;
+}
+
+std::string UObject::GetFullName()
+{
+    static auto Lib = UObject::FindObject(L"/Script/Engine.Default__KismetSystemLibrary");
+    static auto Func = UObject::FindObject(L"/Script/Engine.KismetSystemLibrary.GetPathName"); // I hope this function isn't something they added in like ue5 because im too lazy to do the proper GetFullName
+    struct
+    {
+        UObject* Object;
+        FString ReturnValue;
+    } args {this};
+    Lib->ProcessEvent(Func, &args);
+    return std::format("{} {}", ClassPrivate->GetName(), args.ReturnValue.ToString());
+}
+
+bool UObject::IsA(UObject* OtherClass)
+{
+    for (auto Class = ClassPrivate; Class; Class = Class->GetSuperStruct())
+    {
+        if (Class == OtherClass)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void InitOffsets()
+{
+    Offsets::UStruct::SuperStruct = 0x40;
+    Offsets::UStruct::ChildProperties = 0x50;
+    Offsets::UStruct::PropertiesSize = 0x58;
+
+    Offsets::FField::Next = 0x18;
+    Offsets::FField::Name = 0x20;
+
+    Offsets::FProperty::Offset_Internal = 0x3C;
 }

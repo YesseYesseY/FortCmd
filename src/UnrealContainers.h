@@ -546,6 +546,11 @@ namespace UC
 			return L"";
 		}
 
+        inline int32 Len() const
+        {
+            return Num() ? Num() - 1 : 0;
+        }
+
 	public:
 		inline       wchar_t* CStr()       { return Data; }
 		inline const wchar_t* CStr() const { return Data; }
