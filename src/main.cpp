@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <format>
 #include <string>
+#include <Minhook.h>
 
 #include "memcury.h"
 #include "UE.h"
@@ -27,6 +28,13 @@ UObject* GetEngine()
     return Engine;
 }
 
+template <typename T = void*>
+void HookFunction(uintptr_t Addr, void* Hook, T* Original = nullptr)
+{
+    MH_CreateHook((LPVOID)Addr, Hook, (LPVOID*)Original);
+    MH_EnableHook((LPVOID)Addr);
+}
+
 UObject* SpawnObject(UObject* ObjectClass, UObject* Outer)
 {
     static auto GameplayStatics = UObject::FindObject(L"/Script/Engine.Default__GameplayStatics");
@@ -41,6 +49,11 @@ UObject* SpawnObject(UObject* ObjectClass, UObject* Outer)
     return args.ReturnValue;
 }
 
+void RequestExitHook()
+{
+    return;
+}
+
 DWORD WINAPI Main(LPVOID lpParam)
 {
 #ifdef ALLOC_CONSOLE
@@ -48,6 +61,8 @@ DWORD WINAPI Main(LPVOID lpParam)
     FILE* f = nullptr;
     freopen_s(&f, "CONOUT$", "w", stdout);
 #endif // ALLOC_CONSOLE
+
+    MH_Initialize();
 
     // 26.30
     // UGameViewportClient::SetupInitialLocalPlayer
@@ -79,8 +94,24 @@ DWORD WINAPI Main(LPVOID lpParam)
         UObject::Objects = (FChunkedFixedUObjectArray*)(Addr);
     }
 
-    auto GameViewport = GetEngine()->GetChild(0x08F0);
-    GameViewport->GetChild(0x0040) = SpawnObject(UObject::FindObject(L"/Script/Engine.Console"), GameViewport);
+    // RequestExit
+    {
+        auto Addr = Memcury::Scanner::FindPattern("48 89 5C 24 ? 48 89 74 24 ? 57 48 83 EC 20 33 DB 0F B6 F9").Get();
+
+        if (!Addr)
+        {
+            SimpleMessageBox("Couldn't find RequestExit");
+            return 0;
+        }
+
+        HookFunction(Addr, RequestExitHook);
+    }
+
+    // Allows for console input on loadingscreen
+    UObject::FindObject(L"/Script/FortniteGame.Default__FortRuntimeOptions")->GetChild<bool>("bLoadingScreenInputPreprocessorEnabled") = false;
+
+    auto GameViewport = GetEngine()->GetChild("GameViewport");
+    GameViewport->GetChild("ViewportConsole") = SpawnObject(UObject::FindObject(L"/Script/Engine.Console"), GameViewport);
 
     return 0;
 }

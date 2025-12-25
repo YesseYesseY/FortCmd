@@ -23,6 +23,19 @@ namespace Offsets
     namespace UStruct
     {
         int32 ChildProperties = 0x50;
+        int32 SuperStruct = 0x40;
+    }
+
+    // Idk if this changes so maybe can turn FField into its own struct
+    namespace FField
+    {
+        int32 Next = 0x18;
+        int32 Name = 0x20;
+    }
+
+    namespace FProperty
+    {
+        int32 Offset_Internal = 0x3C;
     }
 }
 
@@ -152,6 +165,40 @@ struct UObject
         return *(T*)(int64(this) + Offset);
     }
 
+    int32 GetOffset(std::string Name)
+    {
+        for (auto Class = ClassPrivate; Class; Class = Class->GetChild(Offsets::UStruct::SuperStruct))
+        {
+            // This is not a UObject but might aswell treat it like one just to use GetChild
+            for (auto Child = Class->GetChild(Offsets::UStruct::ChildProperties); Child; Child = Child->GetChild(Offsets::FField::Next))
+            {
+                if (Child->GetChild<FName>(Offsets::FField::Name).ToString() == Name)
+                    return Child->GetChild<int32>(Offsets::FProperty::Offset_Internal);
+            }
+        }
+
+        return -1;
+    }
+
+    template <typename T = UObject*>
+    T& GetChild(std::string Name)
+    {
+        return *(T*)(int64(this) + GetOffset(Name));
+    }
+
+    bool IsA(UObject* OtherClass)
+    {
+        for (auto Class = ClassPrivate; Class; Class = Class->GetChild(Offsets::UStruct::SuperStruct))
+        {
+            if (Class = OtherClass)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     static UObject* FindObject(const wchar_t* Name, UObject* Class = nullptr, bool ExactClass = false, UObject* Outer = nullptr)
     {
         if (!StaticFindObject)
@@ -199,6 +246,6 @@ std::string FName::ToString()
     } args {*this};
     Lib->ProcessEvent(Func, &args);
     auto ret = args.ReturnValue.ToString();
-    args.ReturnValue.Free();
+    // args.ReturnValue.Free();
     return ret;
 }
