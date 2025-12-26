@@ -38,6 +38,10 @@ namespace Offsets
     {
         int32 Offset_Internal = -1;
     }
+
+    namespace UConsole
+    {
+    }
 }
 
 #define ENUM_CLASS_FLAGS(Enum) \
@@ -250,7 +254,7 @@ std::string FName::ToString()
     } args {*this};
     Lib->ProcessEvent(Func, &args);
     auto ret = args.ReturnValue.ToString();
-    // args.ReturnValue.Free();
+    args.ReturnValue.Free();
     return ret;
 }
 

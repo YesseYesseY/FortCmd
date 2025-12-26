@@ -4,9 +4,11 @@
 #include <string>
 #include <fstream>
 #include <Minhook.h>
+#include <cwctype>
 
 #include "memcury.h"
 #include "UE.h"
+#include "Console.h"
 
 UObject* GetEngine()
 {
@@ -85,6 +87,8 @@ bool UWorldExecHook(UObject* World, UObject* WorldPart2, const wchar_t* Cmd, int
             outfile << Object->GetFullName() << '\n';
         }
         outfile.close();
+
+        return true;
     }
 
     return UWorldExecOriginal(World, WorldPart2, Cmd, a4);
@@ -99,10 +103,6 @@ DWORD WINAPI Main(LPVOID lpParam)
 #endif // ALLOC_CONSOLE
 
     MH_Initialize();
-
-    // 26.30
-    // UGameViewportClient::SetupInitialLocalPlayer
-    // 48 89 5C 24 ? 57 48 83 EC 30 83 64 24 ? ? 48 8D 05 ? ? ? ? 48 8B D9 C6 41
 
     // FMemory::Realloc
     {
@@ -134,33 +134,40 @@ DWORD WINAPI Main(LPVOID lpParam)
     {
         auto Addr = Memcury::Scanner::FindPattern("48 89 5C 24 ? 48 89 74 24 ? 57 48 83 EC 20 33 DB 0F B6 F9").Get();
 
-        if (!Addr)
+        if (Addr)
         {
-            SimpleMessageBox("Couldn't find RequestExit");
-            return 0;
+            HookFunction(Addr, RequestExitHook);
+        }
+        else
+        {
+            SimpleMessageBox("Couldn't find RequestExit - Will probably crash if you open BR map on later builds");
         }
 
-        HookFunction(Addr, RequestExitHook);
     }
 
     // UWorld::Exec
     {
         auto Addr = Memcury::Scanner::FindStringRef(L"FLUSHPERSISTENTDEBUGLINES", true).ScanFor({0xCC}, false).Get() + 1;
 
-        if (!Addr)
+        if (Addr)
         {
-            SimpleMessageBox("Couldn't find UWorld::Exec");
-            return 0;
+            HookFunction(Addr, UWorldExecHook, &UWorldExecOriginal);
         }
-
-        HookFunction(Addr, UWorldExecHook, &UWorldExecOriginal);
+        else
+        {
+            SimpleMessageBox("Couldn't find UWorld::Exec - Custom commands will not work");
+        }
     }
+
+    InitOffsets();
 
     // Allows for console input on loadingscreen
     UObject::FindObject(L"/Script/FortniteGame.Default__FortRuntimeOptions")->GetChild<bool>("bLoadingScreenInputPreprocessorEnabled") = false;
 
     auto GameViewport = GetEngine()->GetChild("GameViewport");
-    GameViewport->GetChild("ViewportConsole") = SpawnObject(UObject::FindObject(L"/Script/Engine.Console"), GameViewport);
+    auto NewConsole = (UConsole*)SpawnObject(UObject::FindObject(L"/Script/Engine.Console"), GameViewport);
+    NewConsole->BuildRuntimeAutoCompleteList();
+    GameViewport->GetChild("ViewportConsole") = NewConsole;
 
     return 0;
 }
